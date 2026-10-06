@@ -1,0 +1,19 @@
+# 行尾统一 LF（S0-04）
+* text=auto eol=lf
+
+# 脚本保留可执行位
+*.sh text eol=lf
+*.ps1 text eol=lf
+
+# 二进制文件
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.xlsx binary
+*.docx binary
+*.zip binary
+*.gz binary
+*.tar binary

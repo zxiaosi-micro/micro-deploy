@@ -1,0 +1,18 @@
+# ===== 本仓红线：真实环境配置与密钥永不入库（E11）=====
+.env
+.env.*
+!.env.example
+keys/
+*.key
+*.pem
+
+# 日志与临时产物
+logs/
+*.log
+*.tmp
+*.bak
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
