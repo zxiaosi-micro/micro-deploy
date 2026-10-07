@@ -25,6 +25,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # compose 的 env_file: .env 在 config 阶段就要求文件存在（真实 .env gitignore 不入库）——
+      # CI 用样例值拷一份临时副本仅作语法校验
+      - name: 准备临时 .env（样例值，仅校验用）
+        run: cp compose/dev/.env.example compose/dev/.env
       - name: docker compose config（.env.example 作为插值源）
         run: docker compose -f compose/dev/docker-compose.dev.yml --env-file compose/dev/.env.example config -q
 
