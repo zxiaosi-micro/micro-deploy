@@ -4,7 +4,8 @@
 #   - 目录结构 = <服务名>/<文件名>.json|yml|yaml，一层服务段 + 一层文件（按服务分文件）
 #   - 服务段 `_platform` 为平台全局配置（跨服务消费）
 #   - etcd 键位 = /micro/config/<服务名>/<文件名去扩展名>（tools/configpush 推送）
-#   - 修改流程：改本目录 → PR 评审 → 合并后 CI/本地推送 etcd → 服务 listener 秒级 reload（E15）
+#   - 修改流程：改本目录 → PR 评审（CI 结构校验）→ 合并后推送 etcd → 服务 listener 秒级 reload（E15）
+#     推送方式：dev 机 `make push-config`（托管 runner 不可达 dev etcd；自托管 runner 接入后改 CI 自动推送）
 #   - 结构校验：configpush -validate（CI PR 门槛；json 必须 JSON 对象、yml 必须映射）
 #
 # 首批配置项登记（S2-06）：
