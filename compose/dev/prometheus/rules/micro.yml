@@ -1,0 +1,75 @@
+# S2-02 · 三级告警规则基线（v4/02 §11 告警规则基线 + NFR-OBS-004）
+# go-zero 框架指标（源码 internal 口径，v1.10.3）：
+#   http_server_requests_code_total{path,method,code}      —— REST
+#   http_server_requests_duration_ms_bucket{path,method,code,le}
+#   rpc_server_requests_code_total / rpc_server_requests_duration_ms_bucket —— RPC
+# 业务指标命名空间 micro_（§11：eventbus_dead_events_total / saga_stuck_orders / cron_overdue_tasks）
+# 说明：服务 S3 起陆续上线，此前 91xx 目标持续 DOWN、业务指标无 series 属 dev 预期。
+groups:
+  - name: go-zero-service
+    rules:
+      # ---- 三级：ServiceDown（critical）----
+      - alert: ServiceDown
+        expr: up{job="micro-go-zero"} == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "服务不可达: {{ $labels.instance }}"
+          description: "go-zero 服务 {{ $labels.instance }} 连续 3 分钟抓取失败（进程未起或 metrics 端口未监听）。"
+
+      # ---- 一级：HighErrorRate（critical，5m 错误率 > 5%）----
+      - alert: HighErrorRate
+        expr: |
+          sum by (job) (rate(http_server_requests_code_total{job=~"micro.*", code=~"5.."}[5m]))
+            / sum by (job) (rate(http_server_requests_code_total{job=~"micro.*"}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "错误率过高: {{ $labels.job }}"
+          description: "{{ $labels.job }} 5 分钟 5xx 错误率超过 5%（当前 {{ $value | humanizePercentage }}）。"
+
+      # ---- 二级：HighLatency（warning，P99 > 1s）----
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, job) (rate(http_server_requests_duration_ms_bucket{job=~"micro.*"}[5m]))) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P99 延迟过高: {{ $labels.job }}"
+          description: "{{ $labels.job }} P99 延迟超过 1s（当前 {{ $value | humanize }}ms）。"
+
+  - name: platform-backlog
+    rules:
+      # ---- dead 表积压（warning）：eventbus 死信 > 0，消费侧对账兜底失效信号（E10：修复只补投递重放）----
+      - alert: EventbusDeadBacklog
+        expr: micro_eventbus_dead_events_total > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "eventbus dead 表积压"
+          description: "死信事件 {{ $value }} 条——按对账口径走补投递重放，禁止裸删（E10）。"
+
+      # ---- Saga 卡单（critical）：订单编排停滞 > 0，人工介入队列入口 ----
+      - alert: SagaStuckOrders
+        expr: micro_saga_stuck_orders > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Saga 卡单"
+          description: "{{ $value }} 个 Saga 超过重试上限/逾期未推进，需人工介入。"
+
+      # ---- cron 逾期扫描积压（warning）：next_exec_at 逾期任务堆积（E16）----
+      - alert: CronOverdueTasks
+        expr: micro_cron_overdue_tasks > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "cron 逾期任务积压"
+          description: "{{ $value }} 个 next_exec_at 逾期任务未执行——检查扫描器注册表 last_run 指标（E16）。"

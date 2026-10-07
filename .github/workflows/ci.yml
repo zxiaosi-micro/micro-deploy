@@ -1,0 +1,55 @@
+# micro-deploy CI（S2-06：configcenter 正本接入 CI）
+# 说明：PR/push 对 config/** 做"结构校验"（configpush -validate 同款规则）；
+# "推送 etcd"需要访问开发机 etcd（127.0.0.1:22379），GitHub 托管 runner 不可达——
+# 推送由 dev 机器 `make push-config` 执行，或接入自托管 runner 后改为合并自动推送（见 S02 任务文档风险表）。
+name: deploy-ci
+
+on:
+  pull_request:
+    paths: ['config/**', 'compose/**']
+  push:
+    branches: [main]
+    paths: ['config/**', 'compose/**']
+  workflow_dispatch:
+    inputs:
+      note:
+        description: '手动触发备注（如：S2-06 首推配置）'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  compose-check:
+    name: compose 语法/插值校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker compose config（.env.example 作为插值源）
+        run: docker compose -f compose/dev/docker-compose.dev.yml --env-file compose/dev/.env.example config -q
+
+  config-validate:
+    name: 配置正本结构校验（configpush -validate 同款规则）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 校验 config/ 结构与命名
+        run: |
+          fail=0
+          # 规则一：目录树 = <服务段>/<文件>.(json|yml|yaml)，仅两层（configpush collect 同款）
+          while IFS= read -r -d '' f; do
+            rel="${f#config/}"
+            depth=$(awk -F/ '{print NF}' <<< "$rel")
+            svc=$(cut -d/ -f1 <<< "$rel")
+            if [ "$depth" -ne 2 ] || [[ "$svc" == .* && "$svc" != "_platform" && "$svc" != "_demo" ]]; then
+              echo "FAIL 结构: $f（允许 <svc>/<file> 一层，服务段以字母或 _ 开头）"; fail=1; continue
+            fi
+            case "$f" in
+              *.json) python3 -c "import json,sys; d=json.load(open(sys.argv[1],encoding='utf-8')); assert isinstance(d,dict) and d, '顶层必须是 JSON 对象'" "$f" || { echo "FAIL JSON: $f"; fail=1; } ;;
+              *.yml|*.yaml) python3 -c "import yaml,sys; d=yaml.safe_load(open(sys.argv[1],encoding='utf-8')); assert isinstance(d,dict) and d, '顶层必须是 YAML 映射'" "$f" 2>/dev/null || { echo "FAIL YAML: $f"; fail=1; } ;;
+              *.md) : ;;
+              *) echo "FAIL 类型: $f（仅 json/yml/yaml/md）"; fail=1 ;;
+            esac
+          done < <(find config -type f -not -name '*.md' -print0)
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "config/ 结构校验通过（$fail FAIL）"

@@ -1,0 +1,32 @@
+# S2-02 · APISIX 3.11 dev 配置（v4/02 §7.1）
+# 传统模式 + etcd 配置存储（prefix=/apisix，与 configcenter /micro/config、服务发现 key 三者互不相交，ADR-10）
+# 注意（3.11 源码口径）：role=traditional 时 etcd 连接信息读 deployment.etcd（顶层 etcd 段会被
+#   config-default 覆盖）——host 必须写在 deployment.etcd 下。
+# 环境变量替换语法：APISIX 用 ${{VAR}}（${VAR} 与 Nginx 变量冲突，不做替换）。
+# Admin API key 经环境变量注入（E11）；仅回环绑定兜底，dev 权限。
+deployment:
+  role: traditional
+  role_traditional:
+    config_provider: etcd
+  admin:
+    admin_listen:
+      ip: 0.0.0.0
+      port: 9180
+    # dev：宿主机经 docker 代理访问 Admin API，源 IP 是网关而非 127.0.0.1，
+    # 默认 allow_admin(127.0.0.0/24) 会 403；宿主端口 29180 已绑回环兜底（E11 边界）。
+    allow_admin:
+      - 0.0.0.0/0
+    admin_key:
+      - name: admin
+        key: ${{MICRO_DEV_APISIX_ADMIN_KEY}}
+        role: admin
+  etcd:
+    host:
+      - "http://etcd:2379"     # 容器网内走服务名 + 容器端口（v4/02 §15.2 组网口径）
+    prefix: /apisix
+    timeout: 30
+
+apisix:
+  node_listen:
+    - 9080
+  enable_control: true

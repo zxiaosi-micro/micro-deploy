@@ -1,0 +1,65 @@
+# S2-02 · Prometheus dev 抓取与告警接线（v4/02 §11）
+# E17：go-zero 服务跑在宿主机，metrics 端口 91xx（§5.2）——容器内 127.0.0.1 指容器自己，
+#      必须用 host.docker.internal（compose 已加 extra_hosts: host-gateway 兼容 Linux）。
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]   # 三级告警 → Alertmanager → webhook（S4-04 notification 接入）
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # ---- 自监控与 obs 组件（容器网内服务名直连）----
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+  - job_name: grafana
+    static_configs:
+      - targets: ["grafana:3000"]
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+  - job_name: promtail
+    static_configs:
+      - targets: ["promtail:9080"]
+  - job_name: jaeger
+    static_configs:
+      - targets: ["jaeger:14269"]   # all-in-one 管理口自带 /metrics（8888 不存在）
+  # TDengine 指标抓取：3.3.6.13 taosAdapter /metrics 返回 gzip 却缺 Content-Encoding 头（上游 quirk），
+  # Prometheus 解析失败——暂缓，S6 iotingest 接入时随镜像版本复核
+  # MinIO 集群指标需 prometheus 抓取 token（mc admin prometheus generate 生成后配 bearer_token），
+  # S4 file 服务接入时随桶策略一并配置；EMQX 抓取需 Dashboard API Key（S6 IoT 阶段接入后补）
+
+  # ---- go-zero 业务服务（宿主机 91xx；§5.2 全量预登记，服务未上线前显示 DOWN 属预期）----
+  # 预留不复用：9108 / 9116（E12）
+  - job_name: micro-go-zero
+    static_configs:
+      - targets:
+          - "host.docker.internal:9101"    # identity
+          - "host.docker.internal:9102"    # party
+          - "host.docker.internal:9103"    # catalog
+          - "host.docker.internal:9104"    # inventory
+          - "host.docker.internal:9105"    # device
+          - "host.docker.internal:9106"    # file
+          - "host.docker.internal:9107"    # audit
+          - "host.docker.internal:9109"    # notification
+          - "host.docker.internal:9110"    # order
+          - "host.docker.internal:9111"    # station
+          - "host.docker.internal:9112"    # finance
+          - "host.docker.internal:9113"    # contract
+          - "host.docker.internal:9114"    # ops
+          - "host.docker.internal:9115"    # analytics
+          - "host.docker.internal:9117"    # hello（模板）
+          - "host.docker.internal:9118"    # admin-bff
+          - "host.docker.internal:9119"    # mobile-bff
+          - "host.docker.internal:9120"    # iotingest
+        labels:
+          env: dev

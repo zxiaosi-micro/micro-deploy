@@ -1,0 +1,13 @@
+# S2-02 · 看板 provisioning：go-zero 社区看板（服务 RED 基线，不自画）+ 后续业务看板
+apiVersion: 1
+
+providers:
+  - name: micro-dashboards
+    orgId: 1
+    folder: micro
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

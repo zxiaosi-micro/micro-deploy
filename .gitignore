@@ -5,6 +5,10 @@
 keys/
 *.key
 *.pem
+# 密钥样例目录（仅公钥+结构样例，供对接参考）：keys/、*.pem 对其例外
+!deploy/conf/keys.example/
+!deploy/conf/keys.example/**
+!compose/dev/.env.example
 
 # 日志与临时产物
 logs/

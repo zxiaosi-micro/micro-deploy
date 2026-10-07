@@ -1,0 +1,23 @@
+{
+  "generated_at": "2026-10-07T00:00:00+08:00",
+  "jwt": {
+    "kid": "0123456789abcdef",
+    "alg": "RS256",
+    "private": "jwt_rs256_private.pem",
+    "public": "jwt_rs256_public.pem"
+  },
+  "ota": {
+    "alg": "Ed25519",
+    "private": "ota_ed25519_private.pem",
+    "public": "ota_ed25519_public.pem"
+  },
+  "data_key": {
+    "kid": "dk-01234567",
+    "encoding": "base64url(32B)",
+    "file": "data_key.txt",
+    "env_usage": "MICRO_DATA_KEYS=dk-01234567=<base64url 32B>"
+  },
+  "notes": [
+    "样例文件：结构展示用，kid/时间均为占位；真实产出见 deploy/conf/keys/（gitignore）"
+  ]
+}

@@ -1,0 +1,6 @@
+# 轮询间隔（ADR-02 统一轮询方案：前端 usePolling 默认 10s，后端可调；页面隐藏自动暂停）
+web_poll_interval_sec: 10
+big_screen_poll_interval_sec: 10
+miniapp_poll_interval_sec: 30
+unread_pending_query_max_rows: 100
+version: 1

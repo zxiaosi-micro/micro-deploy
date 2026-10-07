@@ -1,0 +1,35 @@
+# S2-02 · Promtail：采集 micro-server/logs/*_run.log（logx file 模式输出）
+# 打标：service（文件名 <svc>_run.log）、level / trace（logx JSON 字段，v1.10.x）——
+# Loki 里可按 {service="order"} 检索、trace_id 字段跳转 Jaeger（数据源 derivedFields 已接）。
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: micro
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: micro
+          env: dev
+          __path__: /var/log/micro/*_run.log
+    pipeline_stages:
+      # 文件名 <svc>_run.log → service 标签
+      - regex:
+          source: filename
+          expression: '(?P<service>[^/\\]+)_run\.log$'
+      - labels:
+          service:
+      # logx JSON：level + trace（缺失时跳过，不影响采集）
+      - json:
+          expressions:
+            level: level
+            trace: trace
+      - labels:
+          level:

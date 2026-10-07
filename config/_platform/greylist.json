@@ -1,0 +1,9 @@
+{
+  "comment": "灰度白名单（内部账号 uid 列表；与 APISIX traffic-split 双通道，ADR-22）",
+  "enabled": false,
+  "uids": [
+    "9000000000000000002"
+  ],
+  "note": "uid=9000000000000000002 为 seed 平台管理员；启用灰度时置 enabled=true",
+  "version": 1
+}

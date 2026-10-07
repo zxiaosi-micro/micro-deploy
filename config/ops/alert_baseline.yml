@@ -1,0 +1,10 @@
+# 告警规则参数兜底值（ops 服务判定 alert_candidate 用，v4/02 §11/§9.6）
+# Prometheus 告警规则的硬阈值在 micro-deploy/compose/dev/prometheus/rules/；
+# 本文件是业务侧（ops）消费的兜底参数——configcenter 可调，30s 内生效（E15）。
+poll_interval_sec: 10
+thresholds:
+  temp_diff_c: 10        # 电池组温差告警兜底阈值
+  voltage_diff_mv: 200   # 压差告警兜底阈值
+  soc_low_pct: 15        # 低电量告警兜底阈值
+suppress_window_sec: 300 # 同一聚合告警抑制窗口
+version: 1

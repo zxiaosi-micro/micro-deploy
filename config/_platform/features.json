@@ -1,0 +1,9 @@
+{
+  "comment": "平台功能开关（运行时可调，合并后由 configpush 推送 etcd /micro/config/_platform/features）",
+  "iot_command_downlink": true,
+  "wechat_pay_mock": true,
+  "alipay_mock": true,
+  "subscription_message": false,
+  "export_async_enabled": true,
+  "version": 1
+}

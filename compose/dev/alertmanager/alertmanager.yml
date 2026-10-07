@@ -1,0 +1,24 @@
+# S2-02 · Alertmanager dev 路由（v4/02 §11：webhook → notification）
+# notification 服务（S4-04）落地前，webhook 指向占位地址：dev 仅打印/持久化站内信。
+# 生产路由（S4 后细化）：critical → 电话/短信；warning → 企微/站内信（NFR-OBS-004）。
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ["alertname", "job"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: dev-webhook
+  routes:
+    - matchers:
+        - severity = "critical"
+      receiver: dev-webhook
+      repeat_interval: 30m
+
+receivers:
+  - name: dev-webhook
+    webhook_configs:
+      # 占位：notification 服务上线后改为 admin-bff/mobile-bff webhook 端点（走容器网内服务名）
+      - url: http://host.docker.internal:8890/api/v1/webhooks/alertmanager
+        send_resolved: true
