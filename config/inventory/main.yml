@@ -1,0 +1,4 @@
+# inventory 运行时参数（S4-05；防超卖网关运行时口径）
+redis_gate_enabled: true        # 防超卖 Redis 预扣网关开关（false=纯 DB 路径，仍不超卖）
+reconcile_interval_sec: 30      # Redis↔DB 对账周期
+low_stock_alert_fallback_ms: 60000  # 低库存告警兜底节流

@@ -1,0 +1,3 @@
+# file 运行时参数（S4-05）
+token_exp_sec: 300     # 下载令牌有效期兜底值
+upload_enabled: true   # 上传开关（运维可一键停写）

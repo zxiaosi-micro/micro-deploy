@@ -1,0 +1,3 @@
+# notification 运行时参数（S4-05；FR-NTF-002 频控可配）
+rate_limit_per_24h: 3  # 同用户同模板 24h 内上限
+deliver_enabled: true  # 投递总开关

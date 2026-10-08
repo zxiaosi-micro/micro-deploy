@@ -1,0 +1,4 @@
+# party 运行时参数（S4-05 首批消费：告警兜底值/轮询间隔/开关，ADR-10）
+# 修改走 PR 评审 → CI configpush 推送 etcd → 服务 listener 热生效（E15 排障口径）
+list_fallback_ms: 20000    # 列表查询兜底轮询间隔
+crm_auto_follow_up: false  # 商机到期自动提醒扫描开关
