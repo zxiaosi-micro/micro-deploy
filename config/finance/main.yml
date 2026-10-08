@@ -1,0 +1,5 @@
+# finance 运行时参数（S5-03；FR-FIN-001 渠道开关）
+mock_gateway: true        # dev 模拟网关（冒烟不依赖真实商户号）；生产 PR 改 false
+channel_degraded: false   # 渠道降级开关（true=只收对公，02 §10 降级行为）
+wechat_enabled: true      # 微信渠道开关
+alipay_enabled: true      # 支付宝渠道开关
