@@ -1,0 +1,6 @@
+# analytics 运行参数（S8，监听键 /micro/config/analytics/main）
+export_workers: 2        # 导出 TaskRunner 并发（FR-ANA-003 与在线请求隔离；热调）
+export_pdf_rows: 2000    # PDF 行数封顶（ADR-18 简单表格版式；超出走 CSV/XLSX）
+recon_enabled: true      # 日级对账 cron 开关（daily_recon T-1；差异 → recon_diff + 站内信）
+recon_target_uid: 0      # 差异站内信收件人（0=平台管理员 seed uid）
+pdf_font: ""             # PDF 中文字体路径（空=用服务启动配置 ${PDF_FONT}）
