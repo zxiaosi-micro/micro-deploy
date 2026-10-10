@@ -15,6 +15,9 @@ DASH_USER="${MICRO_DEV_EMQX_DASHBOARD_USER:?MICRO_DEV_EMQX_DASHBOARD_USER 未设
 DASH_PW="${MICRO_DEV_EMQX_DASHBOARD_PW:?MICRO_DEV_EMQX_DASHBOARD_PW 未设置}"
 DEV_USER="${MICRO_DEV_EMQX_DEVICE_USER:?MICRO_DEV_EMQX_DEVICE_USER 未设置}"
 DEV_PW="${MICRO_DEV_EMQX_DEVICE_PW:?MICRO_DEV_EMQX_DEVICE_PW 未设置}"
+# S6：平台后端账号（device 服务指令下行 pub down/# + iotingest forwarder 订阅 up/#）——与设备联调账号方向互补
+PLAT_USER="${MICRO_DEV_EMQX_PLATFORM_USER:-micro-dev-platform}"
+PLAT_PW="${MICRO_DEV_EMQX_PLATFORM_PW:-}"
 CT="-H Content-Type:application/json"
 
 echo "[emqx-bootstrap] 等待 Dashboard API 就绪..."
@@ -85,5 +88,21 @@ echo "[emqx-bootstrap] 写入平台账号 ACL..."
 code=$(api PUT "/authorization/sources/built_in_database/rules/users/${DEV_USER}" \
   '{"username":"'"${DEV_USER}"'","rules":[{"permission":"allow","action":"publish","topic":"up/#"},{"permission":"allow","action":"subscribe","topic":"down/#"},{"permission":"deny","action":"all","topic":"#"}]}')
 [ "$code" = 200 ] || [ "$code" = 201 ] || [ "$code" = 204 ] || { echo "[emqx-bootstrap] ACL 写入失败（HTTP $code）"; exit 1; }
+
+# ---- 5) 平台后端账号（S6）：存在即跳过，否则创建；未配密码则跳过（不覆盖已有）----
+if [ -n "$PLAT_PW" ]; then
+  echo "[emqx-bootstrap] 检查/创建平台后端账号 ${PLAT_USER}..."
+  code=$(api POST "/authentication/password_based:built_in_database/users"     "{\"user_id\":\"${PLAT_USER}\",\"password\":\"${PLAT_PW}\",\"is_superuser\":false}")
+  case "$code" in
+    200|201|204) echo "[emqx-bootstrap]   已创建" ;;
+    400|409)     echo "[emqx-bootstrap]   已存在，跳过" ;;
+    *) echo "[emqx-bootstrap]   创建失败（HTTP $code）"; exit 1 ;;
+  esac
+  echo "[emqx-bootstrap] 写入平台后端 ACL（pub down/# + sub up/#）..."
+  code=$(api PUT "/authorization/sources/built_in_database/rules/users/${PLAT_USER}"     '{"username":"'"${PLAT_USER}"'","rules":[{"permission":"allow","action":"publish","topic":"down/#"},{"permission":"allow","action":"subscribe","topic":"up/#"},{"permission":"deny","action":"all","topic":"#"}]}')
+  [ "$code" = 200 ] || [ "$code" = 201 ] || [ "$code" = 204 ] || { echo "[emqx-bootstrap] ACL 写入失败（HTTP $code）"; exit 1; }
+else
+  echo "[emqx-bootstrap] MICRO_DEV_EMQX_PLATFORM_PW 未设置，跳过平台后端账号（S6 服务侧用不到时可不建）"
+fi
 
 echo "[emqx-bootstrap] 完成：认证器 + 授权源 + 平台账号 + ACL 就绪（幂等，可重跑）"

@@ -221,6 +221,8 @@ services:
       MICRO_DEV_EMQX_DASHBOARD_PW: ${MICRO_DEV_EMQX_DASHBOARD_PW}
       MICRO_DEV_EMQX_DEVICE_USER: ${MICRO_DEV_EMQX_DEVICE_USER}
       MICRO_DEV_EMQX_DEVICE_PW: ${MICRO_DEV_EMQX_DEVICE_PW}
+      MICRO_DEV_EMQX_PLATFORM_USER: ${MICRO_DEV_EMQX_PLATFORM_USER:-micro-dev-platform}
+      MICRO_DEV_EMQX_PLATFORM_PW: ${MICRO_DEV_EMQX_PLATFORM_PW:-}
     volumes:
       - ./emqx/bootstrap.sh:/bootstrap/bootstrap.sh:ro
     entrypoint: ["/bin/sh", "/bootstrap/bootstrap.sh"]
