@@ -1,0 +1,3 @@
+# ops 运行参数（S7-01，监听键 /micro/config/ops/main）
+accept_timeout_min: 0     # 0=用服务启动配置（30min 接单超时）；confcenter 热调覆盖
+poll_interval_sec: 10     # 前端轮询间隔提示（ADR-02：10s 轮询定稿值）

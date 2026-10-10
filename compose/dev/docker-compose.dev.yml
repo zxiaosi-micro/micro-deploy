@@ -149,7 +149,10 @@ services:
     entrypoint: ["bash", "/init/01-change-password.sh"]
 
   kafka:
-    image: apache/kafka:4.1.0
+    # 3.9.x：与 go-queue v1.2.2 锁定的 kafka-go v0.4.47 完全兼容。4.1.0 会触发客户端
+    # 断连重连循环（每消费连接空闲 ~200KB/s 空转，broker 请求线程满转、宿主 load 6+）——
+    # 升回 4.x 前先升客户端（见 v4/04 §待办 Kafka4x 兼容项）。
+    image: apache/kafka:3.9.1
     container_name: micro-dev-kafka
     restart: unless-stopped
     profiles: [core]
