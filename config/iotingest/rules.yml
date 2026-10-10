@@ -1,0 +1,7 @@
+# iotingest 越限规则（S6-03；FR-IOT-009 30s 生效口径；业务判定归 ops）
+rules:
+  - {metric: "temperature", comparator: "gt", threshold: 55, level: "warning"}
+  - {metric: "temperature", comparator: "gt", threshold: 70, level: "critical"}
+  - {metric: "soc", comparator: "lt", threshold: 10, level: "warning"}
+  - {metric: "voltage", comparator: "gt", threshold: 500, level: "critical"}
+  - {metric: "power", comparator: "gt", threshold: 6000, level: "warning"}

@@ -1,0 +1,5 @@
+# device 运行参数（S6-01；ADR-09/10 指令链路热调）
+cmd_ack_timeout_ms: 0      # 0=用服务启动配置（3000ms，FR-IOT-006）
+cmd_retry_backoff_sec: 0   # 0=用服务启动配置（60s）
+ota_dispatch_batch: 0      # 0=用任务 batch_size；>0 单轮下发上限
+provision_enabled: true    # EMQX 凭证开通开关（运维窗口可临时关闭）
