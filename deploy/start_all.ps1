@@ -49,6 +49,8 @@ if (-not $SkipEnvcheck) {
 Write-Host '== [3/3] 后端服务 =='
 $services = @(
     # S3 起在此登记，如：'identity', 'admin-bff'
+    # 注意：restart-svc.ps1 不注入 devenv 环境变量（DSN/REDIS_PASS 等），登记前须先
+    # 在本脚本顶部 source 环境——多端联调用 tools/smoke/smoke-start-p5.sh（S9-01，全量环境）
 )
 if ($services.Count -eq 0) {
     Write-Host '（暂无登记的后端服务——S3-05 起在此数组登记，逐个调用 tools/restart-svc.ps1）'
