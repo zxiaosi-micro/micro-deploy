@@ -1,0 +1,42 @@
+# 服务 Deployment 模板 · goctl kube 生成后 overlay 对齐此基线（S11-04 阶段二）
+# 硬化基线（02 §15.3）：非 root、tzdata、healthcheck、资源限额、replicas=2
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order
+  namespace: micro
+  labels: { app: order, tier: rpc }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: order }
+  template:
+    metadata:
+      labels: { app: order, tier: rpc }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: order
+          image: ghcr.io/zxiaosi-micro/micro-order:IMAGE_TAG_PLACEHOLDER
+          ports:
+            - containerPort: 8090   # RPC
+            - containerPort: 9110   # metrics（Prometheus 抓）
+          env:
+            - { name: ETCD_HOSTS, valueFrom: { configMapKeyRef: { name: micro-infra, key: etcd-hosts } } }
+            - { name: MICRO_DSN_ORDER, valueFrom: { secretKeyRef: { name: micro-dsn, key: order } } }
+            - { name: KAFKA_BROKERS, valueFrom: { configMapKeyRef: { name: micro-infra, key: kafka-brokers } } }
+          readinessProbe:
+            tcpSocket: { port: 8090 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: 8090 }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }   # 零中断滚动（发布演练 #1）

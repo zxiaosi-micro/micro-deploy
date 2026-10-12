@@ -1,0 +1,64 @@
+# NetworkPolicy default-deny · micro 命名空间默认全拒（S11-04 阶段二，NFR-SEC-006）
+# 放行规则按服务白名单补（APISIX→BFF、BFF→RPC、全部→etcd/Redis/Kafka）
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: micro
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+# etcd / 云 MySQL / 云 Redis / Kafka 出站放行（业务服务全量）
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-infra-egress
+  namespace: micro
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: micro-infra }
+    - to: [] # 云托管 endpoint（集群外 IP 段）：DNS + 出集群全放行，收敛白名单见 04 待办
+      ports:
+        - protocol: UDP
+          port: 53
+---
+# APISIX → BFF（admin-bff 8889 / mobile-bff 8890）
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-apisix-to-bff
+  namespace: micro
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app, operator: In, values: [admin-bff, mobile-bff] }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: apisix }
+      ports:
+        - { protocol: TCP, port: 8889 }
+        - { protocol: TCP, port: 8890 }
+---
+# BFF → 全部 RPC 服务（微服务互调统一从 BFF 侧入，RPC 间互调按服务对再补）
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-bff-to-rpc
+  namespace: micro
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: tier, operator: In, values: [rpc] }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - { key: tier, operator: In, values: [bff] }

@@ -1,0 +1,173 @@
+# docker-compose.prod-app.yml · 阶段一生产 ECS-1（4C8G，业务面，02 §15.3）
+#
+# 拓扑：APISIX 边缘入口 + 17 个业务服务容器（镜像 GHCR tag=git sha，CI 构建推送）。
+# MySQL/Redis 云托管（B1 切换点：endpoint 走 .env，容器不落地）；MinIO→云 OSS（file 服务 endpoint 走 .env）。
+# 中间件（Kafka/EMQX/TDengine/etcd/可观测）在 ECS-2：docker-compose.prod-data.yml。
+# 服务发现/configcenter：ETCD_HOSTS 指向 ECS-2 内网地址（etcd 广播地址必须是客户端可达地址——AGENTS 已知坑）。
+#
+# 用法（ECS-1）：
+#   cp .env.example .env && vim .env     # 填真实密钥（不入库）
+#   docker compose -f docker-compose.prod-app.yml up -d
+# 发布：IMAGE_TAG=<git sha> docker compose -f docker-compose.prod-app.yml up -d（只前向兼容，两阶段发布纪律）
+
+name: micro-prod-app
+
+x-svc: &svc
+  restart: unless-stopped
+  env_file:
+    - .env
+  networks: [micro-prod]
+
+services:
+  apisix:
+    image: apache/apisix:3.11.0-debian
+    container_name: micro-prod-apisix
+    restart: unless-stopped
+    ports:
+      - "80:9080"       # 公网 HTTP（生产 TLS 在 SLB/云 WSS 终结，NFR-SEC-002）
+      - "127.0.0.1:9180:9180"  # Admin API 仅回环（路由经 apisix-init.sh 推送）
+    environment:
+      APISIX_STAND_ALONE: "false"
+    volumes:
+      - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+    depends_on: []
+    networks: [micro-prod]
+
+  # —— 业务服务（BFF 对内网暴露，网关唯一入口）——
+  identity:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-identity:${IMAGE_TAG:-latest}
+    container_name: micro-prod-identity
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      MICRO_DSN_IDENTITY: ${MICRO_DSN_IDENTITY}
+      MICRO_DATA_KEYS: ${MICRO_DATA_KEYS}
+      MICRO_DATA_KEY_KID: ${MICRO_DATA_KEY_KID}
+      MICRO_HASH_KEY: ${MICRO_HASH_KEY}
+      JWT_KEYS_DIR: /keys
+    volumes:
+      - ./keys:/keys:ro
+  admin-bff:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-admin-bff:${IMAGE_TAG:-latest}
+    container_name: micro-prod-admin-bff
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+    depends_on: [identity]
+  mobile-bff:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-mobile-bff:${IMAGE_TAG:-latest}
+    container_name: micro-prod-mobile-bff
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+    depends_on: [identity]
+  hello:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-hello:${IMAGE_TAG:-latest}
+    container_name: micro-prod-hello
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+  party:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-party:${IMAGE_TAG:-latest}
+    container_name: micro-prod-party
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      MICRO_DSN_PARTY: ${MICRO_DSN_PARTY}
+  catalog:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-catalog:${IMAGE_TAG:-latest}
+    container_name: micro-prod-catalog
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      MICRO_DSN_CATALOG: ${MICRO_DSN_CATALOG}
+  inventory:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-inventory:${IMAGE_TAG:-latest}
+    container_name: micro-prod-inventory
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      MICRO_DSN_INVENTORY: ${MICRO_DSN_INVENTORY}
+  file:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-file:${IMAGE_TAG:-latest}
+    container_name: micro-prod-file
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      MICRO_DSN_FILE: ${MICRO_DSN_FILE}
+      # MinIO→云 OSS（B1）：S3 兼容 endpoint 走 .env
+      OSS_ENDPOINT: ${OSS_ENDPOINT}
+      OSS_BUCKET: ${OSS_BUCKET}
+  audit:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-audit:${IMAGE_TAG:-latest}
+    container_name: micro-prod-audit
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      MICRO_DSN_AUDIT: ${MICRO_DSN_AUDIT}
+  notification:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-notification:${IMAGE_TAG:-latest}
+    container_name: micro-prod-notification
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      MICRO_DSN_NOTIFICATION: ${MICRO_DSN_NOTIFICATION}
+  order:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-order:${IMAGE_TAG:-latest}
+    container_name: micro-prod-order
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      MICRO_DSN_ORDER: ${MICRO_DSN_ORDER}
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+  finance:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-finance:${IMAGE_TAG:-latest}
+    container_name: micro-prod-finance
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      MICRO_DSN_FINANCE: ${MICRO_DSN_FINANCE}
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+  contract:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-contract:${IMAGE_TAG:-latest}
+    container_name: micro-prod-contract
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      MICRO_DSN_CONTRACT: ${MICRO_DSN_CONTRACT}
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+  device:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-device:${IMAGE_TAG:-latest}
+    container_name: micro-prod-device
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      MICRO_DSN_DEVICE: ${MICRO_DSN_DEVICE}
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+  station:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-station:${IMAGE_TAG:-latest}
+    container_name: micro-prod-station
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      MICRO_DSN_STATION: ${MICRO_DSN_STATION}
+  ops:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-ops:${IMAGE_TAG:-latest}
+    container_name: micro-prod-ops
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      MICRO_DSN_OPS: ${MICRO_DSN_OPS}
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+  analytics:
+    <<: *svc
+    image: ghcr.io/zxiaosi-micro/micro-analytics:${IMAGE_TAG:-latest}
+    container_name: micro-prod-analytics
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      MICRO_DSN_ANALYTICS: ${MICRO_DSN_ANALYTICS}
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+
+networks:
+  micro-prod:
+    name: micro-prod-net

@@ -1,0 +1,184 @@
+# docker-compose.prod-data.yml · 阶段一生产 ECS-2（4C16G+500G，数据面，02 §15.3）
+#
+# 内容：Kafka / EMQX / TDengine / iotingest（贴近数据面）+ 可观测六件套。
+# etcd 亦在此（服务发现 + configcenter + APISIX 存储正本）；**advertise-client-urls 必须是
+# ECS-1 可达的内网地址**（etcd 广播地址坑：配容器名/回环则远端客户端 65s 后周期性死亡——AGENTS 已知坑）。
+# MySQL/Redis 云托管不落地；MinIO→云 OSS。
+# TDengine 数据盘挂载宿主大容量目录（500G 盘）。
+#
+# 用法（ECS-2）：
+#   cp .env.example .env && vim .env
+#   docker compose -f docker-compose.prod-data.yml up -d
+#   bash ../scripts/etcd-backup.sh install   # snapshot 定时备份（S11-05）
+
+name: micro-prod-data
+
+x-health-15s: &h15
+  interval: 15s
+  timeout: 5s
+  retries: 12
+  start_period: 20s
+
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.7.0
+    container_name: micro-prod-etcd
+    restart: unless-stopped
+    # 广播地址 = 本机 ECS 内网 IP（.env 注入，必须 ECS-1 可达）
+    command:
+      - etcd
+      - --name=prod1
+      - --data-dir=/var/lib/etcd
+      - --advertise-client-urls=${ETCD_HOSTS}
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://etcd:2380
+      - --initial-cluster=prod1=http://etcd:2380
+    ports:
+      - "2379:2379"
+    volumes:
+      - etcd-data:/var/lib/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
+      <<: *h15
+    # etcd snapshot 定时备份（S11-05）：etcd 官方镜像 distroless 无 shell，容器内循环不可行——
+    # 标准做法为 ECS-2 宿主 cron（etcdctl exec 形式免 shell）：
+    #   bash deploy/scripts/etcd-backup.sh install   # 打印 crontab 行（snapshot + 滚动清理）
+
+  kafka:
+    image: apache/kafka:3.9.1
+    container_name: micro-prod-kafka
+    restart: unless-stopped
+    # advertised listener 必须是客户端可达地址（E3：ECS-1 的服务走内网 IP）
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${KAFKA_ADVERTISED_HOST}:29092,INTERNAL://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"   # E2 先建后用：mqinit 预创建
+    ports:
+      - "29092:29092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092 >/dev/null 2>&1"]
+      <<: *h15
+
+  emqx:
+    image: emqx/emqx:5.8.7
+    container_name: micro-prod-emqx
+    restart: unless-stopped
+    ports:
+      - "1883:1883"     # 设备 MQTT（生产 TLS 8883 由 SLB/证书侧启用）
+      - "18083:18083"   # Dashboard（限内网/堡垒机）
+    volumes:
+      - emqx-data:/opt/emqx/data
+    healthcheck:
+      test: ["CMD", "emqx", "ctl", "status"]
+      <<: *h15
+
+  emqx-bootstrap:
+    image: curlimages/curl:8.12.1
+    container_name: micro-prod-emqx-bootstrap
+    restart: "no"
+    depends_on:
+      emqx:
+        condition: service_healthy
+    environment:
+      MICRO_EMQX_DASHBOARD_USER: ${MICRO_EMQX_DASHBOARD_USER}
+      MICRO_EMQX_DASHBOARD_PW: ${MICRO_EMQX_DASHBOARD_PW}
+      MICRO_EMQX_DEVICE_USER: ${MICRO_EMQX_DEVICE_USER}
+      MICRO_EMQX_DEVICE_PW: ${MICRO_EMQX_DEVICE_PW}
+      MICRO_EMQX_PLATFORM_USER: ${MICRO_EMQX_PLATFORM_USER}
+      MICRO_EMQX_PLATFORM_PW: ${MICRO_EMQX_PLATFORM_PW}
+    volumes:
+      - ../dev/emqx/bootstrap.sh:/bootstrap/bootstrap.sh:ro
+    entrypoint: ["/bin/sh", "/bootstrap/bootstrap.sh"]
+
+  tdengine:
+    image: tdengine/tdengine:3.3.6.13
+    container_name: micro-prod-tdengine
+    restart: unless-stopped
+    environment:
+      TAOS_FQDN: tdengine
+    env_file:
+      - .env
+    volumes:
+      - tdengine-data:/var/lib/taos
+    healthcheck:
+      test: ["CMD-SHELL", 'taos -u root -p"$$MICRO_TDENGINE_PW" -s "show databases"']
+      <<: *h15
+
+  iotingest:
+    # 独立进程型（无 RPC 面）贴近数据面：EMQX 共享订阅 → Kafka 缓冲 → TDengine/影子
+    image: ghcr.io/zxiaosi-micro/micro-iotingest:${IMAGE_TAG:-latest}
+    container_name: micro-prod-iotingest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ETCD_HOSTS: ${ETCD_HOSTS}
+      KAFKA_BROKERS: kafka:9092
+      MICRO_DSN_DEVICE: ${MICRO_DSN_DEVICE}
+      EMQX_BROKER: tcp://emqx:1883
+    depends_on:
+      kafka:
+        condition: service_healthy
+      emqx:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: micro-prod-prometheus
+    restart: unless-stopped
+    volumes:
+      - ../dev/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+  grafana:
+    image: grafana/grafana:12.1.0
+    container_name: micro-prod-grafana
+    restart: unless-stopped
+    volumes:
+      - grafana-data:/var/lib/grafana
+  loki:
+    image: grafana/loki:3.5.3
+    container_name: micro-prod-loki
+    restart: unless-stopped
+    volumes:
+      - loki-data:/loki
+  promtail:
+    image: grafana/promtail:3.5.3
+    container_name: micro-prod-promtail
+    restart: unless-stopped
+    volumes:
+      - ../promtail/config.yml:/etc/promtail/config.yml:ro
+  jaeger:
+    image: jaegertracing/all-in-one:1.74.0
+    container_name: micro-prod-jaeger
+    restart: unless-stopped
+    ports:
+      - "24317:4317"    # OTLP gRPC（ECS-1 服务上报）
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: micro-prod-alertmanager
+    restart: unless-stopped
+    volumes:
+      - ../dev/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+volumes:
+  etcd-data:
+  kafka-data:
+  emqx-data:
+  tdengine-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+
+networks:
+  default:
+    name: micro-prod-data-net

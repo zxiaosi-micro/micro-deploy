@@ -89,3 +89,12 @@ JWT header.kid = SHA-256(SPKI DER) 前 16 hex（keygen 产出并写入 keys.json
 6. **回滚**：任一步验签失败率异常 → 恢复旧 keys.json 重启 BFF（identity 私钥未动，旧 kid 仍可验）。
 
 > 纪律：私钥永不入库（E11）；轮换全程 identity 不丢会话（会话在 Redis 与 kid 无关），用户无感。
+
+### 种子管理员密码轮换（S11-05）
+
+种子 admin（mobile=13800000000，uid ...002 确定性 ID）密码由 `MICRO_ADMIN_PW` 环境变量注入（argon2id）。**轮换 = 改环境变量后重跑种子**：
+
+1. 设置新密码（≥8 位强密码）：`export MICRO_ADMIN_PW=<新密码>`（或更新 compose/dev/.env）。
+2. 重跑种子：`cd micro-server && make seed`——user 行 `ON DUPLICATE KEY UPDATE password_hash=VALUES(password_hash)`，重哈希管理员密码，其余种子幂等不变。
+3. 验证：旧密码登录 401、新密码登录成功（admin-bff `/auth/login`）。
+4. 生产纪律：MICRO_ADMIN_PW 走密钥管理注入（不入库，E11）；轮换记录入运维台账（NFR-SEC-008）。

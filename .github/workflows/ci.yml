@@ -31,6 +31,10 @@ jobs:
         run: cp compose/dev/.env.example compose/dev/.env
       - name: docker compose config（.env.example 作为插值源）
         run: docker compose -f compose/dev/docker-compose.dev.yml --env-file compose/dev/.env.example config -q
+      - name: prod compose 语法校验（S11-04 阶段一）
+        run: |
+          docker compose -f compose/prod/docker-compose.prod-app.yml --env-file compose/prod/.env.example config -q
+          docker compose -f compose/prod/docker-compose.prod-data.yml --env-file compose/prod/.env.example config -q
 
   config-validate:
     name: 配置正本结构校验（configpush -validate 同款规则）

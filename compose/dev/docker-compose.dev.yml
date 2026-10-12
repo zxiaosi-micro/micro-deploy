@@ -111,6 +111,9 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+    # etcd snapshot 定时备份（S11-05）：etcd 官方镜像 distroless 无 shell，容器内循环不可行——
+    # 标准做法为宿主 cron（etcdctl exec 形式免 shell）：
+    #   bash deploy/scripts/etcd-backup.sh install   # 打印 crontab 行（snapshot + 滚动清理）
 
   tdengine:
     image: tdengine/tdengine:3.3.6.13

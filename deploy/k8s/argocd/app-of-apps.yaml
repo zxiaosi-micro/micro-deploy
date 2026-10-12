@@ -1,0 +1,41 @@
+# app-of-apps · ArgoCD 根应用（S11-04 阶段二 GitOps 入口）
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: micro-root
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/zxiaosi-micro/micro-deploy
+    targetRevision: main
+    path: deploy/k8s/argocd/children       # 子 Application 清单目录
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      selfHeal: true     # 漂移即拉回（Git 即正本）
+      prune: false       # 删除需人工（生产窗口纪律）
+---
+# 子应用示例（children/ 下逐服务一份；由 README 的 goctl kube 流程生成后入库）
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: micro-order
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/zxiaosi-micro/micro-deploy
+    targetRevision: main
+    path: deploy/k8s/overlays/order
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: micro
+  syncPolicy:
+    syncOptions: [CreateNamespace=true]
+    # prod 手动 Sync（生产窗口）；staging 副本改 automated.selfHeal=true
