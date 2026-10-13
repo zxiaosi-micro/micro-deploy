@@ -20,6 +20,7 @@ x-health-15s: &h15
   start_period: 20s
 
 services:
+  # etcd 服务发现 + configcenter + APISIX 路由正本（distroless 镜像，备份走宿主 cron）
   etcd:
     image: quay.io/coreos/etcd:v3.7.0
     container_name: micro-prod-etcd
@@ -45,6 +46,7 @@ services:
     # 标准做法为 ECS-2 宿主 cron（etcdctl exec 形式免 shell）：
     #   bash deploy/scripts/etcd-backup.sh install   # 打印 crontab 行（snapshot + 滚动清理）
 
+  # Kafka 事件总线（23 topic E2 先建后用；KRaft 单节点）
   kafka:
     image: apache/kafka:3.9.1
     container_name: micro-prod-kafka
@@ -69,6 +71,7 @@ services:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092 >/dev/null 2>&1"]
       <<: *h15
 
+  # EMQX MQTT broker（设备 up/# 上行 + 平台 down/# 指令下行）
   emqx:
     image: emqx/emqx:5.8.7
     container_name: micro-prod-emqx
@@ -82,6 +85,7 @@ services:
       test: ["CMD", "emqx", "ctl", "status"]
       <<: *h15
 
+  # EMQX 引导（一次性）：建双账号分权（设备联调/平台后端）+ ACL，容器重建后重跑
   emqx-bootstrap:
     image: curlimages/curl:8.12.1
     container_name: micro-prod-emqx-bootstrap
@@ -100,6 +104,7 @@ services:
       - ../dev/emqx/bootstrap.sh:/bootstrap/bootstrap.sh:ro
     entrypoint: ["/bin/sh", "/bootstrap/bootstrap.sh"]
 
+  # TDengine 遥测时序库（micro_iot 库；REST 6041 Basic 认证）
   tdengine:
     image: tdengine/tdengine:3.3.6.13
     container_name: micro-prod-tdengine
@@ -114,6 +119,7 @@ services:
       test: ["CMD-SHELL", 'taos -u root -p"$$MICRO_TDENGINE_PW" -s "show databases"']
       <<: *h15
 
+  # iotingest IoT 接入独立进程（EMQX 共享订阅 → Kafka → TDengine/影子/越限初筛）
   iotingest:
     # 独立进程型（无 RPC 面）贴近数据面：EMQX 共享订阅 → Kafka 缓冲 → TDengine/影子
     image: ghcr.io/zxiaosi-micro/micro-iotingest:${IMAGE_TAG:-latest}
@@ -132,6 +138,8 @@ services:
       emqx:
         condition: service_healthy
 
+  # —— 可观测六件套（指标/日志/追踪/告警）——
+  # prometheus 指标采集（复用 dev 配置正本）
   prometheus:
     image: prom/prometheus:v3.5.0
     container_name: micro-prod-prometheus
@@ -139,30 +147,35 @@ services:
     volumes:
       - ../dev/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
+  # grafana 可视化面板
   grafana:
     image: grafana/grafana:12.1.0
     container_name: micro-prod-grafana
     restart: unless-stopped
     volumes:
       - grafana-data:/var/lib/grafana
+  # loki 日志聚合
   loki:
     image: grafana/loki:3.5.3
     container_name: micro-prod-loki
     restart: unless-stopped
     volumes:
       - loki-data:/loki
+  # promtail 日志采集（容器 stdout → loki）
   promtail:
     image: grafana/promtail:3.5.3
     container_name: micro-prod-promtail
     restart: unless-stopped
     volumes:
       - ../promtail/config.yml:/etc/promtail/config.yml:ro
+  # jaeger 全链路追踪（OTLP gRPC 接收 ECS-1 上报）
   jaeger:
     image: jaegertracing/all-in-one:1.74.0
     container_name: micro-prod-jaeger
     restart: unless-stopped
     ports:
       - "24317:4317"    # OTLP gRPC（ECS-1 服务上报）
+  # alertmanager 告警分发（复用 dev 配置正本）
   alertmanager:
     image: prom/alertmanager:v0.28.1
     container_name: micro-prod-alertmanager

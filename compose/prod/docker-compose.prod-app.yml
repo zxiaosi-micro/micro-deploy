@@ -19,6 +19,7 @@ x-svc: &svc
   networks: [micro-prod]
 
 services:
+  # APISIX 边缘网关：公网唯一 HTTP 入口，路由经 apisix-init.sh 推送
   apisix:
     image: apache/apisix:3.11.0-debian
     container_name: micro-prod-apisix
@@ -34,6 +35,7 @@ services:
     networks: [micro-prod]
 
   # —— 业务服务（BFF 对内网暴露，网关唯一入口）——
+  # identity 认证/会话中心：JWT 密钥目录只读挂载，数据密钥/HMAC 注入
   identity:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-identity:${IMAGE_TAG:-latest}
@@ -47,6 +49,7 @@ services:
       JWT_KEYS_DIR: /keys
     volumes:
       - ./keys:/keys:ro
+  # admin-bff 管理后台聚合网关（无独立 DB，全部下游 RPC）
   admin-bff:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-admin-bff:${IMAGE_TAG:-latest}
@@ -54,6 +57,7 @@ services:
     environment:
       ETCD_HOSTS: ${ETCD_HOSTS}
     depends_on: [identity]
+  # mobile-bff 多端移动网关（客户端/场站小程序/运维 App）
   mobile-bff:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-mobile-bff:${IMAGE_TAG:-latest}
@@ -61,12 +65,14 @@ services:
     environment:
       ETCD_HOSTS: ${ETCD_HOSTS}
     depends_on: [identity]
+  # hello 示例服务（新服务骨架对照）
   hello:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-hello:${IMAGE_TAG:-latest}
     container_name: micro-prod-hello
     environment:
       ETCD_HOSTS: ${ETCD_HOSTS}
+  # party 参与方（买方/经销商/员工档案；手机号加密存储）
   party:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-party:${IMAGE_TAG:-latest}
@@ -74,6 +80,7 @@ services:
     environment:
       ETCD_HOSTS: ${ETCD_HOSTS}
       MICRO_DSN_PARTY: ${MICRO_DSN_PARTY}
+  # catalog 商品与价目（下单价格快照源）
   catalog:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-catalog:${IMAGE_TAG:-latest}
@@ -81,6 +88,7 @@ services:
     environment:
       ETCD_HOSTS: ${ETCD_HOSTS}
       MICRO_DSN_CATALOG: ${MICRO_DSN_CATALOG}
+  # inventory 库存（Redis 预扣网关 + DB 守卫双保险）
   inventory:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-inventory:${IMAGE_TAG:-latest}
@@ -88,6 +96,7 @@ services:
     environment:
       ETCD_HOSTS: ${ETCD_HOSTS}
       MICRO_DSN_INVENTORY: ${MICRO_DSN_INVENTORY}
+  # file 文件服务（双桶 + 下载令牌；产物上限 64MB 撑导出）
   file:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-file:${IMAGE_TAG:-latest}
@@ -98,6 +107,7 @@ services:
       # MinIO→云 OSS（B1）：S3 兼容 endpoint 走 .env
       OSS_ENDPOINT: ${OSS_ENDPOINT}
       OSS_BUCKET: ${OSS_BUCKET}
+  # audit 审计（append-only 操作留痕 + 指令独立审计）
   audit:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-audit:${IMAGE_TAG:-latest}
@@ -105,6 +115,7 @@ services:
     environment:
       ETCD_HOSTS: ${ETCD_HOSTS}
       MICRO_DSN_AUDIT: ${MICRO_DSN_AUDIT}
+  # notification 通知（站内信/订阅消息/触达日志）
   notification:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-notification:${IMAGE_TAG:-latest}
@@ -112,6 +123,7 @@ services:
     environment:
       ETCD_HOSTS: ${ETCD_HOSTS}
       MICRO_DSN_NOTIFICATION: ${MICRO_DSN_NOTIFICATION}
+  # order 订单（Saga 状态机 + Outbox；Kafka 事件源）
   order:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-order:${IMAGE_TAG:-latest}
@@ -120,6 +132,7 @@ services:
       ETCD_HOSTS: ${ETCD_HOSTS}
       MICRO_DSN_ORDER: ${MICRO_DSN_ORDER}
       KAFKA_BROKERS: ${KAFKA_BROKERS}
+  # finance 财务（支付/退款/对账/返利；Kafka 消费 order_paid）
   finance:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-finance:${IMAGE_TAG:-latest}
@@ -128,6 +141,7 @@ services:
       ETCD_HOSTS: ${ETCD_HOSTS}
       MICRO_DSN_FINANCE: ${MICRO_DSN_FINANCE}
       KAFKA_BROKERS: ${KAFKA_BROKERS}
+  # contract 合同质保（签收起算/延保/索赔；Kafka 消费 shipment_signed）
   contract:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-contract:${IMAGE_TAG:-latest}
@@ -136,6 +150,7 @@ services:
       ETCD_HOSTS: ${ETCD_HOSTS}
       MICRO_DSN_CONTRACT: ${MICRO_DSN_CONTRACT}
       KAFKA_BROKERS: ${KAFKA_BROKERS}
+  # device 设备域（生命周期/OTA/指令下行 EMQX；Kafka 消费库存事件）
   device:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-device:${IMAGE_TAG:-latest}
@@ -144,6 +159,7 @@ services:
       ETCD_HOSTS: ${ETCD_HOSTS}
       MICRO_DSN_DEVICE: ${MICRO_DSN_DEVICE}
       KAFKA_BROKERS: ${KAFKA_BROKERS}
+  # station 场站（档案/绑定/拓扑 + 影子只读）
   station:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-station:${IMAGE_TAG:-latest}
@@ -151,6 +167,7 @@ services:
     environment:
       ETCD_HOSTS: ${ETCD_HOSTS}
       MICRO_DSN_STATION: ${MICRO_DSN_STATION}
+  # ops 运维（告警闭环/工单/SLA/巡检；Kafka 消费 alert_candidate）
   ops:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-ops:${IMAGE_TAG:-latest}
@@ -159,6 +176,7 @@ services:
       ETCD_HOSTS: ${ETCD_HOSTS}
       MICRO_DSN_OPS: ${MICRO_DSN_OPS}
       KAFKA_BROKERS: ${KAFKA_BROKERS}
+  # analytics 分析（读模型/对账/导出/ETL；双 Kafka 消费组）
   analytics:
     <<: *svc
     image: ghcr.io/zxiaosi-micro/micro-analytics:${IMAGE_TAG:-latest}
