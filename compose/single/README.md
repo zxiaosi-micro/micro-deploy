@@ -46,6 +46,6 @@ source .env && APISIX_ADMIN=http://127.0.0.1:9180 APISIX_KEY=$MICRO_DEV_APISIX_A
 
 - 登录：`POST /api/v1/auth/login {mobile:"13800000000", password:$MICRO_ADMIN_PW}`（种子管理员，MOCKWX=1 微信链路可用）
 - 分页参数是 `page`/`size`（不是 page_size）；请求缺参报 500 fallback 而非 110400（SetBadRequestClassifier 未覆盖 parse 错误，历史行为）
-- S4 菜单迁移绑 admin 角色时 `menu_id>=...201` 范围过滤漏掉 S3 的 25 个 `system:*` 菜单——单机已按
-  `INSERT IGNORE INTO role_menu SELECT admin × 全部菜单` 补数据；仓库级修复（迁移文件）待补
+- S4 菜单迁移绑 admin 角色时 `menu_id>=...201` 范围过滤漏掉 S3 的 25 个 `system:*` 菜单——已由
+  identity 迁移 000011 修复（admin × 全部菜单幂等绑定，2026-10-14 已应用验证）
 - OTLP 链路无 Jaeger：服务日志周期性 otel export timeout 属预期噪声
