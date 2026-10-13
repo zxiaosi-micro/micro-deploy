@@ -32,15 +32,24 @@ docker compose up -d
 source .env && APISIX_ADMIN=http://127.0.0.1:9180 APISIX_KEY=$MICRO_DEV_APISIX_ADMIN_KEY bash apisix-ip-routes.sh
 ```
 
-## 端口面（安全组需放行）
+## 端口面与访问地址（2026-10-14 TLS 收编后）
 
-| 端口 | 内容 |
+公网入口收敛到 **443 单端口**（DigiCert DV 证书 `zxiaosi.cn`/`www`，DNS 已指本机；证书在 `certs/`，不入库）：
+
+| 地址 | 内容 |
 |---|---|
-| 80 | APISIX：默认路由 → admin-bff（`/api/v1/*`） |
-| 8083 | APISIX：mobile-bff 专用（小程序/运维 App 指这里，路径同样带 `/api/v1` 前缀） |
-| 8080/8081/8082 | Web 静态：admin / dealer / station（`/api/v1` 同源反代 admin-bff） |
+| https://zxiaosi.cn/admin/ | 管理后台（登录：种子管理员 mobile `13800000000` + `MICRO_ADMIN_PW`） |
+| https://zxiaosi.cn/dealer/ | 经销商端 |
+| https://zxiaosi.cn/station/ | 场站端 |
+| https://zxiaosi.cn/api/v1/* | admin-bff API（三端 Web 同源调用；`/` 302 → /admin/） |
+| https://zxiaosi.cn/mapi/* | mobile-bff API（小程序/运维 App base URL 指这里，nginx 前缀改写 `/mapi/*` → `/api/v1/*`） |
+| http://<IP>/ (80) | APISIX API 边缘（保留，默认路由 → admin-bff） |
 | 1883 | EMQX MQTT（设备侧） |
 | 3306/6379/2379/6041/9000/9001/18083 | 仅回环（127.0.0.1 发布，运维排障用） |
+
+8080-8083 端口面已收编至 443（原三端 :8080-8082 与 mobile :8083 停用）。三端为极简 hash 路由，
+路径挂载仅要求 **vite 构建带 base**（`pnpm --filter ./apps/<x> exec vite build --base=/admin/` 等）；
+Git Bash 下必须 `MSYS2_ARG_CONV_EXCL="*" MSYS_NO_PATHCONV=1` 前缀，否则 `/admin/` 被 MSYS 路径转换改写成本机 Git 安装路径。
 
 ## 已知边界（2026-10-14 实测）
 
