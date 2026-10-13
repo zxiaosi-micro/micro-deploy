@@ -1,0 +1,29 @@
+# APISIX 3.11 单机配置（改编自 dev/apisix/config.yaml；etcd 同网络容器名直连）
+# 传统模式 + etcd 配置存储（prefix=/apisix，与 configcenter /micro/config 互不相交，ADR-10）
+# 3.11 源码口径：role=traditional 时 etcd 连接读 deployment.etcd 段
+# Admin API key 经环境变量注入；9180 仅回环发布
+deployment:
+  role: traditional
+  role_traditional:
+    config_provider: etcd
+  admin:
+    admin_listen:
+      ip: 0.0.0.0
+      port: 9180
+    allow_admin:
+      - 0.0.0.0/0        # 宿主端口 9180 绑回环兜底（E11 边界）
+    admin_key:
+      - name: admin
+        key: ${{MICRO_DEV_APISIX_ADMIN_KEY}}
+        role: admin
+  etcd:
+    host:
+      - "http://etcd:2379"
+    prefix: /apisix
+    timeout: 30
+
+apisix:
+  node_listen:
+    - 9080               # 默认 API 面（IP 直访 → admin-bff）
+    - 9083               # mobile-bff 专用面（server_port 路由）
+  enable_control: true

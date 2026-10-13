@@ -1,0 +1,541 @@
+# docker-compose.single.yml · 单机全量部署（4C4G 演示/体验环境，2026-10-14）
+#
+# 与 prod 两阶段编排（prod-app + prod-data）的差异：
+#   - 单机单网络：全部容器同网络，etcd 广播 / Kafka advertised / RPC 直连全走容器名（AGENTS etcd 广播坑的组网正解）
+#   - 砍掉可观测六件套（Prometheus/Grafana/Loki/Promtail/Jaeger/Alertmanager/Pyroscope）——4G 内存预算外
+#   - 中间件容器化（prod 用云托管 MySQL/Redis/OSS）；全部容器加 mem_limit + Kafka 压堆 512M
+#   - MySQL/Redis/etcd/TDengine/MinIO 仅回环发布；公网只有 APISIX(80/8083) + Web 静态(8080-8082) + EMQX(1883)
+#   - 服务镜像本地构建 micro-<svc>:s1（无 Dockerfile 仓库约定，见 compose/single/README）
+#
+# 用法（服务器 /opt/micro/compose/single/）：
+#   cp .env.example .env && 填密钥（.env 不入库）
+#   docker compose up -d mysql redis etcd tdengine tdengine-init kafka emqx emqx-bootstrap minio minio-init
+#   docker run --rm --network micro-net --env-file .env -v /opt/micro/tools:/t micro-tools:s1 /t/migrate -svc identity up   # 15 库逐个
+#   docker run --rm --network micro-net --env-file .env micro-tools:s1 /t/seed
+#   docker run --rm --network micro-net --env-file .env -v /opt/micro/config:/cfg micro-tools:s1 /t/configpush -dir /cfg
+#   docker run --rm --network micro-net --env-file .env micro-tools:s1 /t/mqinit -brokers kafka:9092
+#   docker compose up -d   # 全量拉起
+#   APISIX_ADMIN=http://127.0.0.1:9180 APISIX_KEY=<MICRO_DEV_APISIX_ADMIN_KEY> bash ../scripts/apisix-ip-routes.sh
+name: micro-single
+
+networks:
+  default:
+    name: micro-net
+
+volumes:
+  mysql-data:
+  redis-data:
+  etcd-data:
+  tdengine-data:
+  kafka-data:
+  emqx-data:
+  minio-data:
+
+x-svc: &svc
+  restart: unless-stopped
+  env_file:
+    - .env
+  mem_limit: 160m
+
+x-db: &db
+  image: mysql:8.0.43
+  command: ["--innodb-buffer-pool-size=128M", "--max-connections=300"]
+
+services:
+  # ============== 中间件（mem_limit 合计 ~3.4G 上限，实际 ~2.4G） ==============
+  mysql:
+    <<: *db
+    container_name: micro-mysql
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MICRO_DEV_MYSQL_ROOT_PW}
+      TZ: Asia/Shanghai
+    env_file:
+      - .env
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    mem_limit: 550m
+    healthcheck:
+      test: ["CMD-SHELL", 'mysqladmin ping -h127.0.0.1 -uroot -p"$$MYSQL_ROOT_PASSWORD" --silent']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  redis:
+    image: redis:7.4.5
+    container_name: micro-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: ["sh", "-c", 'exec redis-server --requirepass "$$MICRO_DEV_REDIS_PW" --maxmemory 64mb --maxmemory-policy noeviction']
+    env_file:
+      - .env
+    volumes:
+      - redis-data:/data
+    mem_limit: 120m
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$MICRO_DEV_REDIS_PW\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # etcd 广播 = 容器名（全部客户端同网络内可达——AGENTS 广播坑的单机组网口径）
+  etcd:
+    image: quay.io/coreos/etcd:v3.7.0
+    container_name: micro-etcd
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:2379:2379"
+    command:
+      - etcd
+      - --name=single1
+      - --data-dir=/var/lib/etcd
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://etcd:2380
+      - --initial-cluster=single1=http://etcd:2380
+    volumes:
+      - etcd-data:/var/lib/etcd
+    mem_limit: 200m
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  tdengine:
+    image: tdengine/tdengine:3.3.6.13
+    container_name: micro-tdengine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6041:6041"
+    environment:
+      TAOS_FQDN: tdengine
+    env_file:
+      - .env
+    volumes:
+      - tdengine-data:/var/lib/taos
+    mem_limit: 650m
+    healthcheck:
+      test: ["CMD-SHELL", 'taos -u root -p"$$MICRO_DEV_TDENGINE_PW" -s "show databases" || taos -u root -ptaosdata -s "show databases"']
+      interval: 10s
+      timeout: 8s
+      retries: 12
+      start_period: 30s
+
+  tdengine-init:
+    image: tdengine/tdengine:3.3.6.13
+    container_name: micro-tdengine-init
+    restart: "no"
+    depends_on:
+      tdengine:
+        condition: service_healthy
+    environment:
+      MICRO_DEV_TDENGINE_PW: ${MICRO_DEV_TDENGINE_PW}
+    volumes:
+      - ./tdengine/init:/init:ro
+    entrypoint: ["bash", "/init/run.sh"]
+
+  # Kafka 3.9.1（4.x 客户端空转坑，勿升）；堆压到 512M 省内存
+  kafka:
+    image: apache/kafka:3.9.1
+    container_name: micro-kafka
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:29092:9092"
+    environment:
+      CLUSTER_ID: b1MjoJW0rdDYjcqJmkE-Rw
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xmx512m -Xms512m
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    mem_limit: 900m
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
+
+  emqx:
+    image: emqx/emqx:5.8.7
+    container_name: micro-emqx
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "127.0.0.1:18083:18083"
+    environment:
+      EMQX_DASHBOARD__DEFAULT_USERNAME: ${MICRO_DEV_EMQX_DASHBOARD_USER}
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${MICRO_DEV_EMQX_DASHBOARD_PW}
+    volumes:
+      - emqx-data:/opt/emqx/data
+    mem_limit: 500m
+    healthcheck:
+      test: ["CMD", "emqx", "ctl", "status"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
+
+  emqx-bootstrap:
+    image: curlimages/curl:8.12.1
+    container_name: micro-emqx-bootstrap
+    restart: "no"
+    depends_on:
+      emqx:
+        condition: service_healthy
+    environment:
+      MICRO_EMQX_DASHBOARD_USER: ${MICRO_DEV_EMQX_DASHBOARD_USER}
+      MICRO_EMQX_DASHBOARD_PW: ${MICRO_DEV_EMQX_DASHBOARD_PW}
+      MICRO_EMQX_DEVICE_USER: ${MICRO_DEV_EMQX_DEVICE_USER}
+      MICRO_EMQX_DEVICE_PW: ${MICRO_DEV_EMQX_DEVICE_PW}
+      MICRO_EMQX_PLATFORM_USER: ${MICRO_DEV_EMQX_PLATFORM_USER}
+      MICRO_EMQX_PLATFORM_PW: ${MICRO_DEV_EMQX_PLATFORM_PW}
+    volumes:
+      - ./emqx/bootstrap.sh:/bootstrap/bootstrap.sh:ro
+    entrypoint: ["/bin/sh", "/bootstrap/bootstrap.sh"]
+
+  minio:
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+    container_name: micro-minio
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MICRO_DEV_MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MICRO_DEV_MINIO_ROOT_PASSWORD}
+      MINIO_EXTRA_ARGS: --console-address :9001
+    volumes:
+      - minio-data:/bitnami/minio/data
+    mem_limit: 300m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  minio-init:
+    image: bitnamilegacy/minio-client:2025.7.21-debian-12-r3
+    container_name: micro-minio-init
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MICRO_DEV_MINIO_ROOT_USER: ${MICRO_DEV_MINIO_ROOT_USER}
+      MICRO_DEV_MINIO_ROOT_PASSWORD: ${MICRO_DEV_MINIO_ROOT_PASSWORD}
+      MC_CONFIG_DIR: /tmp/.mc
+    volumes:
+      - ./minio/init-buckets.sh:/init/init-buckets.sh:ro
+    entrypoint: ["/bin/bash", "/init/init-buckets.sh"]
+
+  # ============== 边缘 ==============
+  apisix:
+    image: apache/apisix:3.11.0-debian
+    container_name: micro-apisix
+    restart: unless-stopped
+    depends_on:
+      etcd:
+        condition: service_healthy
+    ports:
+      - "80:9080"                     # API 边缘：默认路由 → admin-bff
+      - "8083:9083"                   # API 边缘：mobile-bff 专用口（小程序/运维 App 指这里）
+      - "127.0.0.1:9180:9180"         # Admin API 仅回环（路由推送用）
+    environment:
+      MICRO_DEV_APISIX_ADMIN_KEY: ${MICRO_DEV_APISIX_ADMIN_KEY}
+    volumes:
+      - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+    mem_limit: 300m
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "awk '/:2378/ && / 0A /{f=1} END{exit !f}' /proc/net/tcp /proc/net/tcp6"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # 三端 Web 静态（admin :8080 / dealer :8081 / station :8082），/api/v1 反代 admin-bff
+  web:
+    image: nginx:1.27-alpine
+    container_name: micro-web
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+      - "8082:8082"
+    volumes:
+      - ./web-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../../web/admin:/usr/share/nginx/admin:ro
+      - ../../web/dealer:/usr/share/nginx/dealer:ro
+      - ../../web/station:/usr/share/nginx/station:ro
+    mem_limit: 64m
+
+  # ============== 业务服务（RPC 端口见 tools/port_registry.txt） ==============
+  identity:
+    <<: *svc
+    image: micro-identity:s1
+    container_name: micro-identity
+    environment:
+      DSN: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_identity?charset=utf8mb4&parseTime=true&loc=Local"
+      JWT_KEYS_DIR: /keys
+    volumes:
+      - ./keys:/keys:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  admin-bff:
+    <<: *svc
+    image: micro-admin-bff:s1
+    container_name: micro-admin-bff
+    mem_limit: 192m
+    volumes:
+      - ./keys:/keys:ro
+    depends_on:
+      identity:
+        condition: service_started
+      etcd:
+        condition: service_healthy
+
+  mobile-bff:
+    <<: *svc
+    image: micro-mobile-bff:s1
+    container_name: micro-mobile-bff
+    mem_limit: 192m
+    volumes:
+      - ./keys:/keys:ro
+    depends_on:
+      identity:
+        condition: service_started
+      etcd:
+        condition: service_healthy
+
+  hello:
+    <<: *svc
+    image: micro-hello:s1
+    container_name: micro-hello
+    environment:
+      DSN: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_hello?charset=utf8mb4&parseTime=true&loc=Local"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  party:
+    <<: *svc
+    image: micro-party:s1
+    container_name: micro-party
+    environment:
+      DSN: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_party?charset=utf8mb4&parseTime=true&loc=Local"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  catalog:
+    <<: *svc
+    image: micro-catalog:s1
+    container_name: micro-catalog
+    environment:
+      DSN: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_catalog?charset=utf8mb4&parseTime=true&loc=Local"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  inventory:
+    <<: *svc
+    image: micro-inventory:s1
+    container_name: micro-inventory
+    environment:
+      DSN: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_inventory?charset=utf8mb4&parseTime=true&loc=Local"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  file:
+    <<: *svc
+    image: micro-file:s1
+    container_name: micro-file
+    environment:
+      DSN: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_file?charset=utf8mb4&parseTime=true&loc=Local"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  audit:
+    <<: *svc
+    image: micro-audit:s1
+    container_name: micro-audit
+    environment:
+      DSN: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_audit?charset=utf8mb4&parseTime=true&loc=Local"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  notification:
+    <<: *svc
+    image: micro-notification:s1
+    container_name: micro-notification
+    environment:
+      DSN: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_notification?charset=utf8mb4&parseTime=true&loc=Local"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  order:
+    <<: *svc
+    image: micro-order:s1
+    container_name: micro-order
+    environment:
+      MICRO_DSN_ORDER: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_order?charset=utf8mb4&parseTime=true&loc=Local"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  finance:
+    <<: *svc
+    image: micro-finance:s1
+    container_name: micro-finance
+    environment:
+      MICRO_DSN_FINANCE: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_finance?charset=utf8mb4&parseTime=true&loc=Local"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  contract:
+    <<: *svc
+    image: micro-contract:s1
+    container_name: micro-contract
+    environment:
+      MICRO_DSN_CONTRACT: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_contract?charset=utf8mb4&parseTime=true&loc=Local"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  device:
+    <<: *svc
+    image: micro-device:s1
+    container_name: micro-device
+    environment:
+      MICRO_DSN_DEVICE: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_device?charset=utf8mb4&parseTime=true&loc=Local"
+    volumes:
+      - ./keys:/keys:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      emqx:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  station:
+    <<: *svc
+    image: micro-station:s1
+    container_name: micro-station
+    environment:
+      MICRO_DSN_STATION: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_station?charset=utf8mb4&parseTime=true&loc=Local"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  ops:
+    <<: *svc
+    image: micro-ops:s1
+    container_name: micro-ops
+    environment:
+      MICRO_DSN_OPS: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_ops?charset=utf8mb4&parseTime=true&loc=Local"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  analytics:
+    <<: *svc
+    image: micro-analytics:s1
+    container_name: micro-analytics
+    mem_limit: 224m
+    environment:
+      MICRO_DSN_ANALYTICS: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_analytics?charset=utf8mb4&parseTime=true&loc=Local"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+
+  iotingest:
+    <<: *svc
+    image: micro-iotingest:s1
+    container_name: micro-iotingest
+    environment:
+      MICRO_DSN_DEVICE: "micro_app:${MICRO_DEV_MYSQL_APP_PW}@tcp(mysql:3306)/micro_device?charset=utf8mb4&parseTime=true&loc=Local"
+      KAFKA_BROKERS: kafka:9092
+      EMQX_BROKER: tcp://emqx:1883
+    depends_on:
+      kafka:
+        condition: service_healthy
+      emqx:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
