@@ -7,6 +7,7 @@
 ```
 micro-deploy/
 ├── compose/dev/        # docker-compose.dev.yml + .env.example（S2-01 落地，15 容器全量）
+├── compose/single/     # 单机(4C4G)全量部署编排：29 容器精简版 + README（2026-10-14 落地实测，v4/02 §15.5）
 ├── config/             # configcenter 配置正本：按服务分文件，PR 评审 + CI 推送 etcd（S2-06 落地）
 ├── docs/               # 平台文档分发副本 + runbook（索引见 docs/README.md）
 │   └── runbook/        # 每服务上线前补同名 runbook（五节规范见 docs/runbook/README.md）
